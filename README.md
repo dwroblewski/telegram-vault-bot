@@ -1,0 +1,276 @@
+# Telegram Vault Bot
+
+A serverless Telegram bot that captures notes and queries your Obsidian vault using AI.
+
+## Cost
+
+- **Capture:** Free within free tiers (Cloudflare Workers, GitHub Actions, R2) — plenty for personal use
+- **Query:** A couple bucks per month in Gemini API costs, depending on usage
+
+No database, no always-on compute, no subscription fees.
+
+## Quick Start
+
+**Tip:** Let Claude Code (or similar) handle setup. Paste this README and say "help me set this up" — it can run the commands, create tokens, and troubleshoot issues.
+
+For experienced users who know Cloudflare Workers and GitHub Actions:
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/downer/telegram-vault-bot
+cd telegram-vault-bot && cp .env.example .env
+
+# 2. Set Cloudflare secrets
+cd worker
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put ALLOWED_USER_ID
+npx wrangler secret put GITHUB_TOKEN      # Fine-grained, Contents:write
+npx wrangler secret put GITHUB_REPO       # "username/vault-repo"
+
+# 3. Copy workflows to your vault repo, add R2 secrets to GitHub
+
+# 4. Deploy and set webhook
+./scripts/sync-vault.sh && ./scripts/deploy.sh
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WORKER_URL>/webhook"
+```
+
+Details below. Troubleshooting at the end.
+
+## Architecture
+
+```
+┌─────────────┐     ┌────────────────────┐     ┌─────────────┐
+│  Telegram   │────▶│  Cloudflare Worker │────▶│  R2 Storage │
+│  (phone)    │◀────│  (edge, serverless)│◀────│  (vault)    │
+└─────────────┘     └────────────────────┘     └─────────────┘
+                            │                        ↑↓
+                            ▼                  ┌─────────────┐
+                     ┌─────────────┐           │ GitHub Repo │
+                     │  Gemini AI  │           │ (your vault)│
+                     │  (queries)  │           └─────────────┘
+                     └─────────────┘
+```
+
+**R2 ↔ GitHub is bidirectional:**
+- **Capture → Git**: You message the bot → saved to R2 → Worker triggers GitHub Action → committed to your vault
+- **Vault → R2**: You push to your vault repo → GitHub Action aggregates markdown → uploads to R2 → next query uses updated content
+- **Daily Digest**: GitHub Action on cron → parses vault → sends summary to Telegram
+
+**Why serverless?** No VM to maintain, no systemd services, auto-scaling, runs at the edge.
+
+**Why no database?** The entire vault fits in Gemini's context window (~500KB). On each query, the bot loads everything and lets the model search. Gemini's implicit caching means repeated queries are cheap and fast. No embeddings, no vector store, no sync logic.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/ask <query>` | Query your vault with AI |
+| `/inbox` | What needs attention in inbox |
+| `/summary` | Summarize today's captures |
+| `/digest` | Trigger morning digest |
+| `/digest evening` | Trigger evening digest |
+| `/recent` | Show last 5 captures |
+| `/stats` | Vault statistics |
+| `/health` | Check bot status |
+| `/help` | List commands |
+| `<any text>` | Capture to inbox |
+
+## Daily Digest
+
+Automatic twice-daily Telegram push notifications:
+- **Morning (7am ET)**: Priority Stack or Countdown Focus (when deadline <14d)
+- **Evening (9pm ET)**: Day summary with tomorrow's focus
+
+Features:
+- Inbox status with stale item count
+- Recent capture previews
+- Countdown to upcoming deadlines
+- Tappable `/inbox` and `/summary` shortcuts
+
+Setup: Add `daily-digest.yml` workflow to your vault repo with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets.
+
+## Setup
+
+### Prerequisites
+
+- Cloudflare account with R2 enabled
+- Telegram bot token (from [@BotFather](https://t.me/BotFather))
+- Gemini API key (from [AI Studio](https://aistudio.google.com/app/apikey))
+- Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
+- GitHub repository for your vault
+
+### Step 1: Configure
+
+```bash
+cp .env.example .env
+# Edit .env with your values
+```
+
+### Step 2: Set Cloudflare Worker Secrets
+
+```bash
+cd worker
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put ALLOWED_USER_ID
+npx wrangler secret put WEBHOOK_SECRET    # openssl rand -hex 32
+npx wrangler secret put GITHUB_TOKEN      # See Step 3
+npx wrangler secret put GITHUB_REPO       # e.g., "username/vault-repo"
+```
+
+### Step 3: Set Up GitHub Sync
+
+Two workflows keep your vault and R2 in sync. Both required.
+
+**3a. Create R2 API token** (for vault → R2 sync)
+1. Cloudflare Dashboard → R2 → Manage R2 API Tokens
+2. Create token with **Admin Read & Write** permission (not Object Read/Write — known bug)
+3. Add these secrets to your **vault repo** (GitHub → Settings → Secrets → Actions):
+   - `R2_ACCESS_KEY_ID`
+   - `R2_SECRET_ACCESS_KEY`
+   - `R2_ACCOUNT_ID`
+
+**3b. Create GitHub token** (for capture → git sync)
+1. GitHub → Settings → Developer settings → Fine-grained tokens
+2. Create token with **Contents: Read and write** permission (required for repository_dispatch)
+3. This is the `GITHUB_TOKEN` you set in Step 2
+
+**3c. Add workflows to your vault repo**
+```bash
+# From your vault repo
+mkdir -p .github/workflows
+cp /path/to/telegram-vault-bot/scripts/workflows/sync-vault.yml .github/workflows/
+cp /path/to/telegram-vault-bot/scripts/workflows/sync-capture.yml .github/workflows/
+git add .github/workflows && git commit -m "Add telegram-vault-bot sync" && git push
+```
+
+See `scripts/setup-github-sync.md` for detailed walkthrough.
+
+### Step 4: Deploy
+
+```bash
+# Initial vault sync (one-time, seeds R2 before GitHub Action exists)
+./scripts/sync-vault.sh
+
+# Deploy the worker
+./scripts/deploy.sh
+```
+
+### Step 5: Set Telegram Webhook
+
+```bash
+# Include secret_token for security (must match WEBHOOK_SECRET from Step 2)
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WORKER_URL>/webhook&secret_token=<WEBHOOK_SECRET>"
+```
+
+### Step 6: Verify Setup
+
+```bash
+./scripts/verify-setup.sh
+```
+
+Checks: worker health, secrets, webhook, vault context. Shows pass/fail for each component.
+
+## Development
+
+```bash
+# Local development
+cd worker
+npx wrangler dev
+
+# View logs
+npx wrangler tail
+```
+
+## Files
+
+```
+worker/src/
+├── index.js           # Router (226 lines)
+├── commands/          # Command handlers
+│   ├── ask.js         # /ask - query vault with AI
+│   ├── capture.js     # Default text capture
+│   ├── digest.js      # /digest - trigger daily digest
+│   ├── help.js        # /help - list commands
+│   ├── recent.js      # /recent - show recent captures
+│   └── stats.js       # /stats - vault statistics
+└── services/          # External API wrappers
+    ├── gemini.js      # Gemini AI queries
+    ├── github.js      # GitHub Actions dispatch
+    ├── security.js    # IP allowlist, rate limiting
+    ├── telegram.js    # Telegram Bot API
+    └── vault.js       # R2 vault access
+
+scripts/               # Sync and deploy scripts
+scripts/workflows/     # GitHub Action workflows (copy to your vault repo)
+tests/                 # Tests (43 total: 37 unit + 6 smoke)
+```
+
+## Troubleshooting
+
+### Sync fails with 403 error
+
+R2 API tokens with "Object Read/Write" permission fail with 403. Use "Admin Read & Write" instead.
+
+```
+Cloudflare Dashboard → R2 → Manage R2 API Tokens
+Create new token with: Admin Read & Write
+```
+
+### GitHub auto-sync not triggering
+
+Fine-grained tokens need "Contents: Read and write" to trigger repository_dispatch. "Actions" permission alone won't work.
+
+```
+GitHub → Settings → Developer settings → Fine-grained tokens
+Required: Contents: Read and write
+```
+
+### Query times out
+
+Queries over 25s timeout. Usually means vault is too large or Gemini is slow.
+
+1. Check vault size: `wc -c /tmp/vault_context.md` (should be <500KB)
+2. Reduce `VAULT_DEPTH` in `.env` (default: 3)
+3. Try again — Gemini has occasional slow responses
+
+### Bot not responding
+
+1. Check webhook: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
+2. Check health: `curl <WORKER_URL>/health`
+3. Check logs: `cd worker && npx wrangler tail`
+
+### Vault not updating after sync
+
+Queries always fetch fresh from R2. If vault seems stale, the GitHub Action may not have run — check Actions tab in your vault repo.
+
+## Security
+
+- Single user only (`ALLOWED_USER_ID`)
+- Webhook signature validation (`WEBHOOK_SECRET`) — **required**
+- Telegram IP allowlist (only accepts requests from Telegram's IP ranges)
+- Rate limiting (20 requests/minute per user)
+- Prompt injection filtering on queries
+- Secrets stored in Cloudflare (not in code)
+- R2 bucket is private
+
+See [SECURITY.md](SECURITY.md) for detailed security model and configuration.
+
+## How I Actually Use It
+
+This bot handles ad-hoc capture. The heavy lifting happens in Claude Code sessions where I:
+- Process the inbox and file notes into the right folders
+- Create links between related notes
+- Generate digests and summaries
+- Do research with the vault as context
+
+The bot solves mobile capture. Claude Code solves everything else. They work together.
+
+## Legacy
+
+Previous Python implementation preserved in `legacy-python` branch.
+
+## License
+
+MIT
