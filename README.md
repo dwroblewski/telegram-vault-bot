@@ -7,7 +7,7 @@ A serverless Telegram bot that captures notes and queries your Obsidian vault us
 - **Capture:** Free within free tiers (Cloudflare Workers, GitHub Actions, R2) — plenty for personal use
 - **Query:** A couple bucks per month in Gemini API costs, depending on usage
 
-No database, no always-on compute, no subscription fees.
+No database needed. Runs on free tiers.
 
 ## Quick Start
 
@@ -57,9 +57,7 @@ Details below. Troubleshooting at the end.
 - **Vault → R2**: You push to your vault repo → GitHub Action aggregates markdown → uploads to R2 → next query uses updated content
 - **Daily Digest**: GitHub Action on cron → parses vault → sends summary to Telegram
 
-**Why serverless?** No VM to maintain, no systemd services, auto-scaling, runs at the edge.
-
-**Why no database?** The entire vault fits in Gemini's context window (~500KB). On each query, the bot loads everything and lets the model search. Gemini's implicit caching means repeated queries are cheap and fast. No embeddings, no vector store, no sync logic.
+Serverless means no VM to maintain, no systemd services. The entire vault fits in Gemini's context window (~500KB), so there's no need for embeddings or a vector store — just load and query. Gemini's implicit caching keeps repeated queries cheap.
 
 ## Commands
 
