@@ -14,7 +14,7 @@ vi.mock('../../src/services/github.js', () => ({
 
 import { sendTelegram, reactToMessage } from '../../src/services/telegram.js';
 
-describe('capture handler', () => {
+describe('capture handler (shadow mode)', () => {
   let mockEnv;
 
   beforeEach(() => {
@@ -33,36 +33,28 @@ describe('capture handler', () => {
     };
   });
 
-  describe('high confidence classification', () => {
-    it('routes person capture to People/ folder', async () => {
-      // Mock config - no custom config, use defaults
-      mockEnv.VAULT.get.mockImplementation((key) => {
-        if (key === '_vault_context.md') return null;
-        if (key === '0-Inbox/_capture_log.jsonl') return null;
-        return null;
-      });
-
-      // Mock Gemini response
+  describe('shadow mode routing', () => {
+    it('routes ALL captures to inbox in shadow mode', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
       mockEnv.AI.run.mockResolvedValue({
         response: JSON.stringify({
           type: 'person',
           confidence: 0.85,
           title: 'Sarah - Acme Corp',
           topics: [],
-          fields: { context: 'CTO at Acme', follow_ups: ['Connect on LinkedIn'] }
+          fields: { context: 'CTO' }
         })
       });
 
-      await handleCapture(mockEnv, 123456, 789, 'met sarah from acme corp today');
+      await handleCapture(mockEnv, 123456, 789, 'met sarah from acme corp');
 
-      // Check R2 put was called with People/ path
+      // In shadow mode, even high confidence goes to inbox
       const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('People/'));
-      expect(notePutCall).toBeDefined();
-      expect(notePutCall[0]).toMatch(/^People\/.*\.md$/);
+      const notePutCall = putCalls.find(c => !c[0].includes('_capture_log'));
+      expect(notePutCall[0]).toMatch(/^0-Inbox\//);
     });
 
-    it('sends thumbs up only for high confidence', async () => {
+    it('logs intended destination in audit trail', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
       mockEnv.AI.run.mockResolvedValue({
         response: JSON.stringify({
@@ -76,44 +68,148 @@ describe('capture handler', () => {
 
       await handleCapture(mockEnv, 123456, 789, 'interesting AI fact');
 
-      expect(reactToMessage).toHaveBeenCalledWith(
-        mockEnv, 123456, 789, '👍'
+      const putCalls = mockEnv.VAULT.put.mock.calls;
+      const auditPutCall = putCalls.find(c => c[0].includes('_capture_log'));
+      expect(auditPutCall).toBeDefined();
+
+      const logContent = auditPutCall[1];
+      // Should have shadow_mode flag
+      expect(logContent).toContain('"shadow_mode":true');
+      // Should log intended destination
+      expect(logContent).toContain('"intended_destination":"Knowledge/');
+      // Actual destination should be inbox
+      expect(logContent).toContain('"destination":"0-Inbox/');
+    });
+
+    it('sends shadow mode feedback with classification details', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
+      mockEnv.AI.run.mockResolvedValue({
+        response: JSON.stringify({
+          type: 'person',
+          confidence: 0.85,
+          title: 'Sarah CEO',
+          topics: [],
+          fields: {}
+        })
+      });
+
+      await handleCapture(mockEnv, 123456, 789, 'met sarah');
+
+      // Shadow mode sends detailed feedback
+      expect(sendTelegram).toHaveBeenCalledWith(
+        mockEnv, 123456,
+        expect.stringContaining('Shadow')
       );
-      // Should NOT send text message for high confidence
-      expect(sendTelegram).not.toHaveBeenCalled();
+      expect(sendTelegram).toHaveBeenCalledWith(
+        mockEnv, 123456,
+        expect.stringContaining('person')
+      );
+      expect(sendTelegram).toHaveBeenCalledWith(
+        mockEnv, 123456,
+        expect.stringContaining('People/')
+      );
+    });
+
+    it('includes confidence percentage in shadow feedback', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
+      mockEnv.AI.run.mockResolvedValue({
+        response: JSON.stringify({
+          type: 'knowledge',
+          confidence: 0.85,
+          title: 'Test',
+          topics: [],
+          fields: {}
+        })
+      });
+
+      await handleCapture(mockEnv, 123456, 789, 'test');
+
+      expect(sendTelegram).toHaveBeenCalledWith(
+        mockEnv, 123456,
+        expect.stringContaining('85%')
+      );
+    });
+
+    it('includes topics in shadow feedback when present', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
+      mockEnv.AI.run.mockResolvedValue({
+        response: JSON.stringify({
+          type: 'knowledge',
+          confidence: 0.9,
+          title: 'AI in PE',
+          topics: ['genai', 'pe'],
+          fields: {}
+        })
+      });
+
+      await handleCapture(mockEnv, 123456, 789, 'how PE uses AI');
+
+      expect(sendTelegram).toHaveBeenCalledWith(
+        mockEnv, 123456,
+        expect.stringContaining('genai')
+      );
     });
   });
 
-  describe('medium confidence classification', () => {
-    it('routes to typed folder but sends confirmation', async () => {
+  describe('classification accuracy tracking', () => {
+    it('tracks person classification intended for People/', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
+      mockEnv.AI.run.mockResolvedValue({
+        response: JSON.stringify({
+          type: 'person',
+          confidence: 0.85,
+          title: 'Sarah - Acme',
+          topics: [],
+          fields: {}
+        })
+      });
+
+      await handleCapture(mockEnv, 123456, 789, 'met sarah from acme');
+
+      const auditContent = mockEnv.VAULT.put.mock.calls
+        .find(c => c[0].includes('_capture_log'))[1];
+      expect(auditContent).toContain('"intended_destination":"People/');
+    });
+
+    it('tracks knowledge classification intended for Knowledge/', async () => {
+      mockEnv.VAULT.get.mockResolvedValue(null);
+      mockEnv.AI.run.mockResolvedValue({
+        response: JSON.stringify({
+          type: 'knowledge',
+          confidence: 0.85,
+          title: 'TIL Transformers',
+          topics: ['genai'],
+          fields: {}
+        })
+      });
+
+      await handleCapture(mockEnv, 123456, 789, 'TIL transformers');
+
+      const auditContent = mockEnv.VAULT.put.mock.calls
+        .find(c => c[0].includes('_capture_log'))[1];
+      expect(auditContent).toContain('"intended_destination":"Knowledge/');
+    });
+
+    it('tracks project classification intended for Projects/', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
       mockEnv.AI.run.mockResolvedValue({
         response: JSON.stringify({
           type: 'project',
-          confidence: 0.6,
+          confidence: 0.8,
           title: 'Dashboard Widget',
           topics: [],
-          fields: { status: 'planning' }
+          fields: {}
         })
       });
 
       await handleCapture(mockEnv, 123456, 789, 'build dashboard widget');
 
-      // Check routed to Projects/
-      const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('Projects/'));
-      expect(notePutCall).toBeDefined();
-
-      // Should send confirmation message
-      expect(sendTelegram).toHaveBeenCalledWith(
-        mockEnv, 123456,
-        expect.stringContaining('project')
-      );
+      const auditContent = mockEnv.VAULT.put.mock.calls
+        .find(c => c[0].includes('_capture_log'))[1];
+      expect(auditContent).toContain('"intended_destination":"Projects/');
     });
-  });
 
-  describe('low confidence classification', () => {
-    it('routes to inbox with hint message', async () => {
+    it('tracks low confidence intended for inbox', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
       mockEnv.AI.run.mockResolvedValue({
         response: JSON.stringify({
@@ -125,58 +221,11 @@ describe('capture handler', () => {
         })
       });
 
-      await handleCapture(mockEnv, 123456, 789, 'some random text');
+      await handleCapture(mockEnv, 123456, 789, 'random text');
 
-      // Check routed to 0-Inbox/
-      const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('0-Inbox/') && !c[0].includes('_capture_log'));
-      expect(notePutCall).toBeDefined();
-
-      // Should send hint message
-      expect(sendTelegram).toHaveBeenCalledWith(
-        mockEnv, 123456,
-        expect.stringContaining('Inbox')
-      );
-    });
-  });
-
-  describe('folder routing', () => {
-    it('routes knowledge to Knowledge/ folder', async () => {
-      mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'knowledge',
-          confidence: 0.85,
-          title: 'TIL Transformers',
-          topics: ['genai'],
-          fields: { one_liner: 'Attention is all you need' }
-        })
-      });
-
-      await handleCapture(mockEnv, 123456, 789, 'TIL transformers use attention');
-
-      const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('Knowledge/'));
-      expect(notePutCall).toBeDefined();
-    });
-
-    it('routes action to 0-Inbox/ folder', async () => {
-      mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'action',
-          confidence: 0.8,
-          title: 'Buy Milk',
-          topics: [],
-          fields: { due_date: '2026-01-21' }
-        })
-      });
-
-      await handleCapture(mockEnv, 123456, 789, 'remember to buy milk');
-
-      const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('0-Inbox/') && !c[0].includes('_capture_log'));
-      expect(notePutCall).toBeDefined();
+      const auditContent = mockEnv.VAULT.put.mock.calls
+        .find(c => c[0].includes('_capture_log'))[1];
+      expect(auditContent).toContain('"intended_destination":"0-Inbox/');
     });
   });
 
@@ -195,7 +244,6 @@ describe('capture handler', () => {
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 
-      // Check audit log was written
       const putCalls = mockEnv.VAULT.put.mock.calls;
       const auditPutCall = putCalls.find(c => c[0].includes('_capture_log.jsonl'));
       expect(auditPutCall).toBeDefined();
@@ -234,8 +282,7 @@ describe('capture handler', () => {
   });
 
   describe('config integration', () => {
-    it('uses custom folder from config', async () => {
-      // Mock custom config
+    it('uses custom folder in intended destination', async () => {
       mockEnv.VAULT.get.mockImplementation((key) => {
         if (key === '_vault_context.md') {
           return {
@@ -258,9 +305,10 @@ person_folder: Contacts`
 
       await handleCapture(mockEnv, 123456, 789, 'met john doe');
 
-      const putCalls = mockEnv.VAULT.put.mock.calls;
-      const notePutCall = putCalls.find(c => c[0].startsWith('Contacts/'));
-      expect(notePutCall).toBeDefined();
+      // Audit log should show Contacts/ as intended destination
+      const auditContent = mockEnv.VAULT.put.mock.calls
+        .find(c => c[0].includes('_capture_log'))[1];
+      expect(auditContent).toContain('"intended_destination":"Contacts/');
     });
   });
 
@@ -279,7 +327,6 @@ person_folder: Contacts`
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 
-      // Check all put calls
       for (const [path, content] of mockEnv.VAULT.put.mock.calls) {
         const lower = content.toLowerCase();
         expect(lower).not.toContain('user');

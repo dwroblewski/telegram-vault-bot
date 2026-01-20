@@ -11,6 +11,13 @@ import { renderNote, buildTags } from '../templates/index.js';
 import { logCapture } from '../services/audit.js';
 
 /**
+ * Shadow mode: classify but always route to inbox
+ * Set to false after validating classification accuracy for ~1 week
+ * Audit log shows intended_destination for review
+ */
+const SHADOW_MODE = true;
+
+/**
  * Handle an incoming capture from Telegram
  * @param {Object} env - Cloudflare Worker environment
  * @param {number} chatId - Telegram chat ID
@@ -23,6 +30,7 @@ export async function handleCapture(env, chatId, messageId, text) {
   const timestamp = new Date().toISOString();
   let config = DEFAULT_CONFIG;
   let classification = null;
+  let intendedDestination = null;
   let destination = null;
   let tags = [];
   let error = null;
@@ -34,8 +42,17 @@ export async function handleCapture(env, chatId, messageId, text) {
     // Classify the capture
     classification = await classifyCapture(text, env, config);
 
-    // Determine destination folder
-    destination = determineDestination(classification, config, timestamp);
+    // Determine intended destination folder
+    intendedDestination = determineDestination(classification, config, timestamp);
+
+    // Shadow mode: always route to inbox, but track intended destination
+    if (SHADOW_MODE) {
+      const filename = intendedDestination.split('/').pop();
+      destination = `0-Inbox/${filename}`;
+      console.log(`Shadow mode: would route to ${intendedDestination}, actually routing to ${destination}`);
+    } else {
+      destination = intendedDestination;
+    }
 
     // Build tags
     tags = buildTags(classification.type, classification.topics || [], config);
@@ -56,8 +73,12 @@ export async function handleCapture(env, chatId, messageId, text) {
       alertOnError(env, 'notifyGitHub', e);
     });
 
-    // Respond based on confidence level
-    await respondToCapture(env, chatId, messageId, classification, config);
+    // Respond based on mode and confidence
+    if (SHADOW_MODE) {
+      await respondShadowMode(env, chatId, messageId, classification, intendedDestination);
+    } else {
+      await respondToCapture(env, chatId, messageId, classification, config);
+    }
 
   } catch (e) {
     console.error('Capture error:', e);
@@ -65,7 +86,7 @@ export async function handleCapture(env, chatId, messageId, text) {
 
     // Fall back to basic capture
     try {
-      const fallbackPath = createFallbackCapture(env, text, timestamp);
+      const fallbackPath = await createFallbackCapture(env, text, timestamp);
       destination = fallbackPath;
 
       // Still send error feedback
@@ -82,6 +103,8 @@ export async function handleCapture(env, chatId, messageId, text) {
       raw: text,
       classification,
       destination,
+      intendedDestination: SHADOW_MODE ? intendedDestination : null,
+      shadowMode: SHADOW_MODE,
       tags,
       error
     });
@@ -172,6 +195,28 @@ async function respondToCapture(env, chatId, messageId, classification, config) 
     // Low confidence: inbox + hint
     await sendTelegram(env, chatId, `📥 Inbox. Prefix with type to route.`);
   }
+}
+
+/**
+ * Shadow mode response - show what WOULD have happened
+ * @param {Object} env - Worker environment
+ * @param {number} chatId - Telegram chat ID
+ * @param {number} messageId - Message ID
+ * @param {Object} classification - Classification result
+ * @param {string} intendedDestination - Where it would have gone
+ */
+async function respondShadowMode(env, chatId, messageId, classification, intendedDestination) {
+  const { type, confidence, title, topics } = classification;
+  const folder = intendedDestination.split('/')[0];
+  const topicStr = topics?.length > 0 ? ` [${topics.join(', ')}]` : '';
+  const confStr = (confidence * 100).toFixed(0);
+
+  // Always show classification details in shadow mode
+  await sendTelegram(
+    env,
+    chatId,
+    `🔬 Shadow: ${type} → ${folder}/ (${confStr}%)${topicStr}\n"${title}"`
+  );
 }
 
 /**

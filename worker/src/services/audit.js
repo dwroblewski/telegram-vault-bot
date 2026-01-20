@@ -13,7 +13,9 @@ export const LOG_PATH = '0-Inbox/_capture_log.jsonl';
  * @param {number} entry.telegramMsgId - Telegram message ID
  * @param {string} entry.raw - Raw capture text
  * @param {Object|null} entry.classification - Classification result or null on error
- * @param {string|null} entry.destination - Destination path or null on error
+ * @param {string|null} entry.destination - Actual destination path or null on error
+ * @param {string|null} entry.intendedDestination - Where it would have gone (shadow mode)
+ * @param {boolean} entry.shadowMode - Whether shadow mode was active
  * @param {string[]} entry.tags - Tags applied to note
  * @param {string|null} entry.error - Error message or null on success
  */
@@ -24,6 +26,8 @@ export async function logCapture(env, entry) {
     raw: entry.raw,
     classification: entry.classification,
     destination: entry.destination,
+    intended_destination: entry.intendedDestination || null,
+    shadow_mode: entry.shadowMode || false,
     tags: entry.tags,
     error: entry.error
   };
