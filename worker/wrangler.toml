@@ -7,7 +7,7 @@ compatibility_date = "2026-01-14"
 # R2 bucket binding - create bucket first, then update name here
 [[r2_buckets]]
 binding = "VAULT"
-bucket_name = "your-vault-bucket"  # Change this to your R2 bucket name
+bucket_name = "telegram-brain-vault"
 
 # Environment variables (secrets set via wrangler secret)
 # TELEGRAM_BOT_TOKEN - set via: wrangler secret put TELEGRAM_BOT_TOKEN
