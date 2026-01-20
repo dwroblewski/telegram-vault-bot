@@ -1,6 +1,6 @@
 /**
  * Capture classifier service
- * Uses Gemini via Cloudflare Workers AI to classify captures
+ * Uses Gemini API directly to classify captures
  * NO hardcoded personal data - all customization via config
  */
 
@@ -20,33 +20,63 @@ export const FALLBACK_CLASSIFICATION = {
 };
 
 /**
- * Classify a capture using Gemini via Workers AI
+ * Classify a capture using Gemini API
  * @param {string} text - Raw capture text
- * @param {Object} env - Cloudflare Worker environment with AI binding
+ * @param {Object} env - Cloudflare Worker environment with GEMINI_API_KEY
  * @param {Object} config - Vault config with topic_keywords
  * @returns {Object} Classification result matching schema
  */
 export async function classifyCapture(text, env, config) {
   try {
-    const prompt = buildClassifyPrompt(config);
-    const fullPrompt = `${prompt}\n\n## Text to Classify\n\n${text}`;
+    const model = env.MODEL || 'gemini-2.0-flash';
+    const apiKey = env.GEMINI_API_KEY;
 
-    const response = await env.AI.run('@cf/google/gemini-1.5-flash', {
-      prompt: fullPrompt,
-      max_tokens: 512
-    });
-
-    if (!response || !response.response) {
+    if (!apiKey) {
+      console.error('GEMINI_API_KEY not configured');
       return generateFallback(text);
     }
 
-    const parsed = parseGeminiResponse(response.response);
+    const prompt = buildClassifyPrompt(config);
+    const fullPrompt = `${prompt}\n\n## Text to Classify\n\n${text}`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          generationConfig: {
+            maxOutputTokens: 512,
+            temperature: 0.3,  // Lower temp for more consistent JSON
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Gemini API error:', error);
+      return generateFallback(text);
+    }
+
+    const data = await response.json();
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!responseText) {
+      console.error('No response from Gemini');
+      return generateFallback(text);
+    }
+
+    const parsed = parseGeminiResponse(responseText);
     if (!parsed) {
+      console.error('Failed to parse Gemini response:', responseText.substring(0, 200));
       return generateFallback(text);
     }
 
     const validated = validateClassification(parsed);
     if (!validated) {
+      console.error('Failed to validate classification:', parsed);
       return generateFallback(text);
     }
 

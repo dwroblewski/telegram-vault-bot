@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleCapture } from '../../src/commands/capture.js';
 
 // Mock dependencies
@@ -14,6 +14,23 @@ vi.mock('../../src/services/github.js', () => ({
 
 import { sendTelegram, reactToMessage } from '../../src/services/telegram.js';
 
+// Mock global fetch for Gemini API
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+function mockGeminiResponse(classification) {
+  return {
+    ok: true,
+    json: () => Promise.resolve({
+      candidates: [{
+        content: {
+          parts: [{ text: JSON.stringify(classification) }]
+        }
+      }]
+    })
+  };
+}
+
 describe('capture handler (shadow mode)', () => {
   let mockEnv;
 
@@ -27,24 +44,21 @@ describe('capture handler (shadow mode)', () => {
         get: vi.fn(),
         put: vi.fn().mockResolvedValue(undefined)
       },
-      AI: {
-        run: vi.fn()
-      }
+      GEMINI_API_KEY: 'test-key',
+      MODEL: 'gemini-2.5-flash'
     };
   });
 
   describe('shadow mode routing', () => {
     it('routes ALL captures to inbox in shadow mode', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'person',
-          confidence: 0.85,
-          title: 'Sarah - Acme Corp',
-          topics: [],
-          fields: { context: 'CTO' }
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'person',
+        confidence: 0.85,
+        title: 'Sarah - Acme Corp',
+        topics: [],
+        fields: { context: 'CTO' }
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'met sarah from acme corp');
 
@@ -56,15 +70,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('logs intended destination in audit trail', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'knowledge',
-          confidence: 0.9,
-          title: 'AI Insight',
-          topics: ['genai'],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'knowledge',
+        confidence: 0.9,
+        title: 'AI Insight',
+        topics: ['genai'],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'interesting AI fact');
 
@@ -83,15 +95,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('sends shadow mode feedback with classification details', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'person',
-          confidence: 0.85,
-          title: 'Sarah CEO',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'person',
+        confidence: 0.85,
+        title: 'Sarah CEO',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'met sarah');
 
@@ -112,15 +122,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('includes confidence percentage in shadow feedback', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'knowledge',
-          confidence: 0.85,
-          title: 'Test',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'knowledge',
+        confidence: 0.85,
+        title: 'Test',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'test');
 
@@ -132,15 +140,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('includes topics in shadow feedback when present', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'knowledge',
-          confidence: 0.9,
-          title: 'AI in PE',
-          topics: ['genai', 'pe'],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'knowledge',
+        confidence: 0.9,
+        title: 'AI in PE',
+        topics: ['genai', 'pe'],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'how PE uses AI');
 
@@ -154,15 +160,13 @@ describe('capture handler (shadow mode)', () => {
   describe('classification accuracy tracking', () => {
     it('tracks person classification intended for People/', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'person',
-          confidence: 0.85,
-          title: 'Sarah - Acme',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'person',
+        confidence: 0.85,
+        title: 'Sarah - Acme',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'met sarah from acme');
 
@@ -173,15 +177,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('tracks knowledge classification intended for Knowledge/', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'knowledge',
-          confidence: 0.85,
-          title: 'TIL Transformers',
-          topics: ['genai'],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'knowledge',
+        confidence: 0.85,
+        title: 'TIL Transformers',
+        topics: ['genai'],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'TIL transformers');
 
@@ -192,15 +194,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('tracks project classification intended for Projects/', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'project',
-          confidence: 0.8,
-          title: 'Dashboard Widget',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'project',
+        confidence: 0.8,
+        title: 'Dashboard Widget',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'build dashboard widget');
 
@@ -211,15 +211,13 @@ describe('capture handler (shadow mode)', () => {
 
     it('tracks low confidence intended for inbox', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'capture',
-          confidence: 0.3,
-          title: 'Random Note',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'capture',
+        confidence: 0.3,
+        title: 'Random Note',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'random text');
 
@@ -232,15 +230,13 @@ describe('capture handler (shadow mode)', () => {
   describe('audit logging', () => {
     it('logs every capture to audit trail', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'capture',
-          confidence: 0.5,
-          title: 'Test',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'capture',
+        confidence: 0.5,
+        title: 'Test',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 
@@ -254,7 +250,7 @@ describe('capture handler (shadow mode)', () => {
 
     it('logs errors when classification fails', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockRejectedValue(new Error('API timeout'));
+      mockFetch.mockRejectedValue(new Error('API timeout'));
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 
@@ -270,7 +266,7 @@ describe('capture handler (shadow mode)', () => {
   describe('error handling', () => {
     it('falls back to basic capture on API error', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockRejectedValue(new Error('API timeout'));
+      mockFetch.mockRejectedValue(new Error('API timeout'));
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 
@@ -293,15 +289,13 @@ person_folder: Contacts`
         return null;
       });
 
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'person',
-          confidence: 0.9,
-          title: 'John Doe',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'person',
+        confidence: 0.9,
+        title: 'John Doe',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'met john doe');
 
@@ -315,15 +309,13 @@ person_folder: Contacts`
   describe('privacy', () => {
     it('never contains hardcoded personal data in output', async () => {
       mockEnv.VAULT.get.mockResolvedValue(null);
-      mockEnv.AI.run.mockResolvedValue({
-        response: JSON.stringify({
-          type: 'capture',
-          confidence: 0.5,
-          title: 'Test',
-          topics: [],
-          fields: {}
-        })
-      });
+      mockFetch.mockResolvedValue(mockGeminiResponse({
+        type: 'capture',
+        confidence: 0.5,
+        title: 'Test',
+        topics: [],
+        fields: {}
+      }));
 
       await handleCapture(mockEnv, 123456, 789, 'test text');
 

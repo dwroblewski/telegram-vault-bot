@@ -1,10 +1,31 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { classifyCapture, FALLBACK_CLASSIFICATION, validateClassification } from '../../src/services/classifier.js';
 import { DEFAULT_CONFIG } from '../../src/services/config.js';
 
+// Mock global fetch
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
 describe('classifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function mockGeminiResponse(classification) {
+    return {
+      ok: true,
+      json: () => Promise.resolve({
+        candidates: [{
+          content: {
+            parts: [{ text: JSON.stringify(classification) }]
+          }
+        }]
+      })
+    };
+  }
+
   it('returns valid schema on success', async () => {
-    const mockGeminiResponse = {
+    const mockClassification = {
       type: 'person',
       confidence: 0.85,
       title: 'Sarah - Acme Corp',
@@ -12,14 +33,9 @@ describe('classifier', () => {
       fields: { context: 'CTO', follow_ups: ['Send LinkedIn request'] }
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify(mockGeminiResponse)
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse(mockClassification));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key', MODEL: 'gemini-2.5-flash' };
     const result = await classifyCapture('met sarah from acme corp today', mockEnv, DEFAULT_CONFIG);
 
     expect(result).toHaveProperty('type');
@@ -32,12 +48,12 @@ describe('classifier', () => {
   });
 
   it('returns fallback on API error', async () => {
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockRejectedValue(new Error('API timeout'))
-      }
-    };
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve('API error')
+    });
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('some text', mockEnv, DEFAULT_CONFIG);
 
     expect(result.type).toBe('capture');
@@ -46,22 +62,34 @@ describe('classifier', () => {
   });
 
   it('returns fallback on invalid JSON response', async () => {
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: 'not valid json at all'
-        })
-      }
-    };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        candidates: [{
+          content: {
+            parts: [{ text: 'not valid json at all' }]
+          }
+        }]
+      })
+    });
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('test text', mockEnv, DEFAULT_CONFIG);
 
     expect(result.type).toBe('capture');
     expect(result.confidence).toBe(0);
   });
 
+  it('returns fallback when API key missing', async () => {
+    const mockEnv = {};  // No GEMINI_API_KEY
+    const result = await classifyCapture('text', mockEnv, DEFAULT_CONFIG);
+
+    expect(result.type).toBe('capture');
+    expect(result.confidence).toBe(0);
+  });
+
   it('validates type is in allowed list', async () => {
-    const mockGeminiResponse = {
+    const mockClassification = {
       type: 'invalid_type',
       confidence: 0.9,
       title: 'Test',
@@ -69,14 +97,9 @@ describe('classifier', () => {
       fields: {}
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify(mockGeminiResponse)
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse(mockClassification));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('text', mockEnv, DEFAULT_CONFIG);
 
     // Should fallback to capture since type is invalid
@@ -84,7 +107,7 @@ describe('classifier', () => {
   });
 
   it('clamps confidence to 0-1 range', async () => {
-    const mockGeminiResponse = {
+    const mockClassification = {
       type: 'knowledge',
       confidence: 1.5,
       title: 'Test',
@@ -92,14 +115,9 @@ describe('classifier', () => {
       fields: {}
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify(mockGeminiResponse)
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse(mockClassification));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('text', mockEnv, DEFAULT_CONFIG);
 
     expect(result.confidence).toBeLessThanOrEqual(1);
@@ -107,7 +125,7 @@ describe('classifier', () => {
   });
 
   it('ensures topics is always an array', async () => {
-    const mockGeminiResponse = {
+    const mockClassification = {
       type: 'knowledge',
       confidence: 0.8,
       title: 'Test',
@@ -115,21 +133,16 @@ describe('classifier', () => {
       fields: {}
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify(mockGeminiResponse)
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse(mockClassification));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('text', mockEnv, DEFAULT_CONFIG);
 
     expect(Array.isArray(result.topics)).toBe(true);
   });
 
   it('returns multi-topic classification', async () => {
-    const mockGeminiResponse = {
+    const mockClassification = {
       type: 'knowledge',
       confidence: 0.9,
       title: 'AI in Private Equity',
@@ -137,45 +150,56 @@ describe('classifier', () => {
       fields: { one_liner: 'How AI transforms PE' }
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify(mockGeminiResponse)
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse(mockClassification));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     const result = await classifyCapture('AI is transforming how PE firms do diligence', mockEnv, DEFAULT_CONFIG);
 
     expect(result.topics).toEqual(['genai', 'pe']);
   });
 
-  it('includes prompt with config topic keywords', async () => {
+  it('handles markdown-wrapped JSON response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        candidates: [{
+          content: {
+            parts: [{ text: '```json\n{"type":"knowledge","confidence":0.8,"title":"Test","topics":[],"fields":{}}\n```' }]
+          }
+        }]
+      })
+    });
+
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
+    const result = await classifyCapture('test text', mockEnv, DEFAULT_CONFIG);
+
+    expect(result.type).toBe('knowledge');
+    expect(result.confidence).toBe(0.8);
+  });
+
+  it('includes topic keywords in prompt', async () => {
     const config = {
       ...DEFAULT_CONFIG,
       topic_keywords: { genai: ['ai', 'llm'], career: ['job', 'interview'] }
     };
 
-    const mockEnv = {
-      AI: {
-        run: vi.fn().mockResolvedValue({
-          response: JSON.stringify({
-            type: 'knowledge',
-            confidence: 0.8,
-            title: 'Test',
-            topics: [],
-            fields: {}
-          })
-        })
-      }
-    };
+    mockFetch.mockResolvedValue(mockGeminiResponse({
+      type: 'knowledge',
+      confidence: 0.8,
+      title: 'Test',
+      topics: [],
+      fields: {}
+    }));
 
+    const mockEnv = { GEMINI_API_KEY: 'test-key' };
     await classifyCapture('test text', mockEnv, config);
 
     // Verify prompt was passed with topic keywords
-    const promptArg = mockEnv.AI.run.mock.calls[0][1].prompt;
-    expect(promptArg).toContain('genai:');
-    expect(promptArg).toContain('career:');
+    const fetchCall = mockFetch.mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    const promptText = body.contents[0].parts[0].text;
+    expect(promptText).toContain('genai:');
+    expect(promptText).toContain('career:');
   });
 });
 
