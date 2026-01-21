@@ -28,7 +28,8 @@ export const FALLBACK_CLASSIFICATION = {
  */
 export async function classifyCapture(text, env, config) {
   try {
-    const model = env.MODEL || 'gemini-2.0-flash';
+    // Default to current stable model - keep updated! See wrangler.toml for valid models
+    const model = env.MODEL || 'gemini-2.5-flash';
     const apiKey = env.GEMINI_API_KEY;
 
     if (!apiKey) {

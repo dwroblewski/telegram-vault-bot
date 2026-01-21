@@ -18,4 +18,10 @@ bucket_name = "telegram-brain-vault"
 # GITHUB_REPO - your vault repo (set via: wrangler secret put GITHUB_REPO) e.g. "username/vault-repo"
 
 [vars]
-MODEL = "gemini-2.0-flash"
+# IMPORTANT: Keep models current! Check https://ai.google.dev/gemini-api/docs/models
+# Current models (Jan 2026):
+#   - gemini-3-flash-preview (latest preview)
+#   - gemini-2.5-flash (stable, recommended)
+#   - gemini-2.5-pro (best quality)
+# DEPRECATED (retire Mar 2026): gemini-2.0-flash, gemini-2.0-flash-lite
+MODEL = "gemini-2.5-flash"
