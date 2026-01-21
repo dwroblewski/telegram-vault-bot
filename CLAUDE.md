@@ -10,8 +10,8 @@ This repository is **public on GitHub**. All code, commits, and content are visi
 
 ### NEVER include in this repo:
 
-1. **Personal topic tags** — No `#genai`, `#career`, `#pe`, `#work` or any user-specific tags
-2. **Personal folder paths** — No `Areas/Area-Example`, `Projects/Project-Example`, etc.
+1. **Personal topic tags** — No user-specific tags (e.g., `#myproject`, `#workstuff`)
+2. **Personal folder paths** — No real folder names from your vault (e.g., `Areas/My-Job`, `Projects/Secret-Project`)
 3. **Real capture examples** — No actual messages from any user's vault
 4. **Specific _vault_context.md content** — Only templates/examples with placeholders
 5. **Evidence logs from personal testing** — Keep in private repos
@@ -32,8 +32,8 @@ This repository is **public on GitHub**. All code, commits, and content are visi
 # 1. Review the diff
 git diff --staged
 
-# 2. Search for personal data patterns
-git diff --staged | grep -iE "(user|owner|company1|company2|area-example|job-search)"
+# 2. Search for personal data patterns (customize this for YOUR name/companies)
+git diff --staged | grep -iE "(yourname|your-company|real-folder-name)"
 
 # 3. If ANY match found: DO NOT COMMIT
 # 4. If uncertain: ASK FIRST

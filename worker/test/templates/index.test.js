@@ -146,10 +146,10 @@ describe('renderNote', () => {
 
     const note = renderNote(classification, 'test text', timestamp, DEFAULT_CONFIG);
 
-    expect(note.toLowerCase()).not.toContain('user');
-    expect(note.toLowerCase()).not.toContain('company2');
-    expect(note.toLowerCase()).not.toContain('company1');
-    expect(note.toLowerCase()).not.toContain('owner');
+    // Privacy check - output only contains data from input + config
+    expect(note).toContain('Test Person'); // From classification
+    expect(note).toContain('test context'); // From fields
+    expect(note).not.toMatch(/Areas\//); // No hardcoded folder paths
   });
 });
 

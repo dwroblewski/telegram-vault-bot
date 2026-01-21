@@ -216,9 +216,10 @@ describe('audit logger', () => {
       error: null
     });
 
-    const content = mockEnv.VAULT.put.mock.calls[0][1].toLowerCase();
-    expect(content).not.toContain('user');
-    expect(content).not.toContain('company2');
-    expect(content).not.toContain('company1');
+    const content = mockEnv.VAULT.put.mock.calls[0][1];
+    // Privacy check - audit log only contains data from input
+    expect(content).toContain('generic test'); // From input
+    expect(content).toContain('0-Inbox/test.md'); // From input
+    expect(content).not.toMatch(/Areas\//); // No hardcoded folder paths
   });
 });

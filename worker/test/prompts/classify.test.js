@@ -18,11 +18,11 @@ describe('classification prompt', () => {
   it('never contains hardcoded personal data', () => {
     const config = { topic_keywords: { genai: ['ai'] } };
     const prompt = buildClassifyPrompt(config);
-    // Privacy check - no personal identifiers
-    expect(prompt.toLowerCase()).not.toContain('user');
-    expect(prompt.toLowerCase()).not.toContain('company2');
-    expect(prompt.toLowerCase()).not.toContain('company1');
-    expect(prompt.toLowerCase()).not.toContain('owner');
+    // Privacy check - prompt should only contain generic instructions
+    // Topics come from config injection, not hardcoded values
+    expect(prompt).toContain('genai: ai'); // From config, not hardcoded
+    expect(prompt).not.toMatch(/Areas\//); // No real folder paths
+    expect(prompt).not.toMatch(/Projects\//); // No real folder paths
   });
 
   it('includes all five classification types', () => {
