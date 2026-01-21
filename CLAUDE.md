@@ -93,6 +93,30 @@ telegram-vault-bot/
 
 ---
 
+## AI Model Policy (CRITICAL)
+
+**NEVER use deprecated models.** Check https://ai.google.dev/gemini-api/docs/models before touching model config.
+
+### Current Models (Jan 2026)
+| Model | Use Case |
+|-------|----------|
+| `gemini-2.5-flash` | **Default** - stable, best price/performance |
+| `gemini-2.5-pro` | Complex reasoning (if needed) |
+| `gemini-3-flash-preview` | Latest preview (may be unstable) |
+
+### Deprecated (DO NOT USE)
+- `gemini-2.0-flash` - retires March 2026
+- `gemini-2.0-flash-lite` - retires March 2026
+- `gemini-1.5-*` - retired
+- `gemini-1.0-*` - retired
+
+### Before changing MODEL in wrangler.toml:
+1. Check the official docs for current model names
+2. Test the new model works
+3. Update the comments in wrangler.toml
+
+---
+
 ## Testing Guidelines
 
 - Use synthetic/generic test data only
